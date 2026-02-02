@@ -71,9 +71,9 @@ export default function RootLayout({
               <Link
                 href="/mypage"
                 className="text-sm font-medium transition-colors hover:text-indigo-600">
-                <button className="rounded-full bg-gray-100 p-2 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700">
+                <div className="rounded-full bg-gray-100 p-2 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700">
                   👤
-                </button>
+                </div>
               </Link>
             </nav>
           </div>

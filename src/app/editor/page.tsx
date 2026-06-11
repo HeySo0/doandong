@@ -1,390 +1,242 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import useUndo from 'use-undo'
-import jsPDF from 'jspdf'
-import html2canvas from 'html2canvas'
+import { useHistory } from '@/hooks/useHistory'
+import { CellData, KnitSymbolType } from '@/types'
+import ToolDock from '@/components/editor/ToolDock'
+import Inspector from '@/components/editor/Inspector'
+import EditorCanvas from '@/components/editor/EditorCanvas'
 
-interface RectShape {
-  id: number
-  type: 'rect'
-  x: number
-  y: number
-  width: number
-  height: number
-  fill: string
-}
+export default function EditorPage() {
+  const [gridWidth, setGridWidth] = useState<number>(16)
+  const [gridHeight, setGridHeight] = useState<number>(16)
+  const [zoomLevel, setZoomLevel] = useState<number>(100)
+  const [selectedColor, setSelectedColor] = useState<string>('#5d6e4c')
+  const [selectedSymbol, setSelectedSymbol] = useState<KnitSymbolType>('knit')
+  const [activeTool, setActiveTool] = useState<'pencil' | 'eraser' | 'hand'>(
+    'pencil'
+  )
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState<boolean>(true)
 
-interface CircleShape {
-  id: number
-  type: 'circle'
-  cx: number
-  cy: number
-  r: number
-  fill: string
-}
-
-type Shape = RectShape | CircleShape
-
-const EditorPage = () => {
-  const [
-    shapesState,
-    { set: setShapes, undo: undoShapes, redo: redoShapes, canUndo, canRedo }
-  ] = useUndo<Shape[]>([])
-  const { present: shapes } = shapesState
-
-  const [selectedShapeId, setSelectedShapeId] = useState<number | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-
-  const svgRef = useRef<SVGSVGElement>(null)
-
-  const selectedShape = shapes.find(shape => shape.id === selectedShapeId)
-
-  const addRectangle = () => {
-    const newRect: RectShape = {
-      id: Date.now(),
-      type: 'rect',
-      x: 50,
-      y: 50,
-      width: 100,
-      height: 100,
-      fill: 'lightblue'
-    }
-    setShapes([...shapes, newRect])
+  // 초기 격자 데이터 생성
+  const createEmptyGrid = (w: number, h: number): CellData[] => {
+    return Array(w * h)
+      .fill(null)
+      .map(() => ({ symbol: 'empty', color: 'transparent' }))
   }
 
-  const addCircle = () => {
-    const newCircle: CircleShape = {
-      id: Date.now(),
-      type: 'circle',
-      cx: 100,
-      cy: 100,
-      r: 50,
-      fill: 'lightgreen'
-    }
-    setShapes([...shapes, newCircle])
-  }
+  // 실행 취소 및 상태 제어를 훅에 위임
+  const {
+    state: canvasGrid,
+    setState: setCanvasGrid,
+    pushState,
+    undo,
+    redo,
+    resetHistory
+  } = useHistory(createEmptyGrid(16, 16))
 
-  const deleteShape = (id: number) => {
-    setShapes(shapes.filter(shape => shape.id !== id))
-    setSelectedShapeId(null)
-  }
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const isPanningRef = useRef(false)
+  const panStartRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 })
 
-  const exportToPdf = () => {
-    // if (svgRef.current) {
-    //   html2canvas(svgRef.current).then(canvas => {
-    //     const imgData = canvas.toDataURL('image/png')
-    //     const pdf = new jsPDF()
-    //     const pdfWidth = pdf.internal.pageSize.getWidth()
-    //     const pdfHeight = (canvas.height * pdfWidth) / canvas.width
-    //     pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight)
-    //     pdf.save('doodle.pdf')
-    //   })
-    // }
-  }
-
+  // 키보드 단축키 이벤트 바인딩 (Ctrl + Z / Ctrl + Y)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        (e.key === 'Delete' || e.key === 'Backspace') &&
-        selectedShapeId !== null
-      ) {
-        deleteShape(selectedShapeId)
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key.toLowerCase() === 'z') {
+          e.preventDefault()
+          if (e.shiftKey) redo()
+          else undo()
+        } else if (e.key.toLowerCase() === 'y') {
+          e.preventDefault()
+          redo()
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [selectedShapeId, shapes])
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [undo, redo])
 
-  const handleMouseDown = (
-    e: React.MouseEvent<SVGRectElement | SVGCircleElement, MouseEvent>,
-    id: number
-  ) => {
-    setSelectedShapeId(id)
-    setIsDragging(true)
-    const svg = e.currentTarget.ownerSVGElement
-    if (svg) {
-      const pt = svg.createSVGPoint()
-      pt.x = e.clientX
-      pt.y = e.clientY
-      const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse())
-      setDragStart({ x: svgP.x, y: svgP.y })
-    }
+  // 모눈 가로/세로 크기 변경 핸들러
+  const handleGridSizeChange = (w: number, h: number) => {
+    pushState(createEmptyGrid(w, h))
+    setGridWidth(w)
+    setGridHeight(h)
+    setTimeout(centerCanvas, 50)
   }
 
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement, MouseEvent>) => {
-    if (isDragging && selectedShapeId !== null) {
-      const svg = e.currentTarget
-      const pt = svg.createSVGPoint()
-      pt.x = e.clientX
-      pt.y = e.clientY
-      const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse())
-      const dx = svgP.x - dragStart.x
-      const dy = svgP.y - dragStart.y
-
-      setShapes(
-        shapes.map(shape => {
-          if (shape.id !== selectedShapeId) return shape
-          if (shape.type === 'rect') {
-            return { ...shape, x: shape.x + dx, y: shape.y + dy }
-          }
-          if (shape.type === 'circle') {
-            return { ...shape, cx: shape.cx + dx, cy: shape.cy + dy }
-          }
-          return shape
-        })
-      )
-      setDragStart(svgP)
+  // 손바닥(Hand) 도구를 사용한 캔버스 이동 정렬
+  const centerCanvas = () => {
+    const viewport = viewportRef.current
+    if (viewport) {
+      viewport.scrollLeft = (4000 - viewport.clientWidth) / 2
+      viewport.scrollTop = (4000 - viewport.clientHeight) / 2
     }
   }
 
-  const handleMouseUp = () => {
-    setIsDragging(false)
-  }
+  useEffect(() => {
+    centerCanvas()
+  }, [])
 
-  const handleCanvasClick = (
-    e: React.MouseEvent<SVGSVGElement, MouseEvent>
-  ) => {
-    if (e.target === e.currentTarget) {
-      setSelectedShapeId(null)
+  // 손바닥 패닝 mousedown 핸들러
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (activeTool !== 'hand' || !viewportRef.current) return
+    isPanningRef.current = true
+    viewportRef.current.style.cursor = 'grabbing'
+    panStartRef.current = {
+      x: e.pageX - viewportRef.current.offsetLeft,
+      y: e.pageY - viewportRef.current.offsetTop,
+      scrollLeft: viewportRef.current.scrollLeft,
+      scrollTop: viewportRef.current.scrollTop
     }
   }
 
-  const updateShapeProperty = (
-    id: number,
-    prop: keyof RectShape | keyof CircleShape,
-    value: any
-  ) => {
-    setShapes(
-      shapes.map(shape =>
-        shape.id === id ? { ...shape, [prop]: value } : shape
-      )
-    )
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isPanningRef.current || activeTool !== 'hand' || !viewportRef.current)
+      return
+    e.preventDefault()
+    const x = e.pageX - viewportRef.current.offsetLeft
+    const y = e.pageY - viewportRef.current.offsetTop
+    const walkX = (x - panStartRef.current.x) * 2
+    const walkY = (y - panStartRef.current.y) * 2
+    viewportRef.current.scrollLeft = panStartRef.current.scrollLeft - walkX
+    viewportRef.current.scrollTop = panStartRef.current.scrollTop - walkY
+  }
+
+  const handleMouseUpOrLeave = () => {
+    if (isPanningRef.current && viewportRef.current) {
+      isPanningRef.current = false
+      viewportRef.current.style.cursor = 'grab'
+    }
+  }
+
+  // 샘플 프리셋 로드 핸들러
+  const handleLoadPreset = (presetName: 'heart' | 'clover') => {
+    pushState(createEmptyGrid(16, 16))
+    setGridWidth(16)
+    setGridHeight(16)
+
+    const presetIndices =
+      presetName === 'heart' ? PRESETS.heart : PRESETS.clover
+    const nextGrid = createEmptyGrid(16, 16)
+    presetIndices.forEach(idx => {
+      nextGrid[idx] = { symbol: selectedSymbol, color: selectedColor }
+    })
+    setCanvasGrid(nextGrid)
+    setTimeout(centerCanvas, 50)
   }
 
   return (
-    <div className="flex h-screen flex-col bg-gray-100">
-      {/* Top Bar */}
-      <header className="flex items-center justify-between border-b bg-white p-2">
-        <div className="flex items-center space-x-4">
-          <span className="font-bold">두들</span>
+    <div className="bg-moss-50/50 flex h-screen flex-grow flex-col overflow-hidden select-none">
+      {/* 1. 최상단 양방향 히스토리 플로팅 바 (zIndex: 30) */}
+      <div className="border-moss-100 absolute top-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-2xl border bg-white/95 p-1.5 shadow-xl backdrop-blur">
+        <button
+          onClick={undo}
+          className="hover:bg-moss-50 text-midnight flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-extrabold transition-all active:scale-95">
+          <i className="fa-solid fa-arrow-rotate-left text-moss-400"></i>
+          <span>실행 취소</span>
+        </button>
+        <div className="bg-moss-200 h-4 w-[1px]" />
+        <button
+          onClick={redo}
+          className="hover:bg-moss-50 text-midnight flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-extrabold transition-all active:scale-95">
+          <span>다시 실행</span>
+          <i className="fa-solid fa-arrow-rotate-right text-moss-400"></i>
+        </button>
+      </div>
+
+      {/* 2. 에디터 캔버스 작업 대지 - zIndex 10 바탕 배치 */}
+      <div
+        ref={viewportRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUpOrLeave}
+        onMouseLeave={handleMouseUpOrLeave}
+        className={`absolute inset-0 z-10 flex overflow-auto select-none ${activeTool === 'hand' ? 'cursor-grab' : 'cursor-default'}`}>
+        <div className="relative flex h-[4000px] w-[4000px] shrink-0 items-center justify-center">
+          <EditorCanvas
+            gridWidth={gridWidth}
+            gridHeight={gridHeight}
+            zoomLevel={zoomLevel}
+            canvasGrid={canvasGrid}
+            setCanvasGrid={setCanvasGrid}
+            selectedColor={selectedColor}
+            selectedSymbol={selectedSymbol}
+            activeTool={activeTool}
+            pushState={pushState}
+          />
         </div>
-        <div className="flex items-center space-x-2">
+      </div>
+
+      {/* 3. 좌측 플로팅 툴독 (zIndex: 20) */}
+      <ToolDock
+        activeTool={activeTool}
+        setActiveTool={setActiveTool}
+        selectedColor={selectedColor}
+        setSelectedColor={setSelectedColor}
+        selectedSymbol={selectedSymbol}
+        setSelectedSymbol={setSelectedSymbol}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
+        onGridSizeChange={handleGridSizeChange}
+      />
+
+      {/* 4. 우측 플로팅 인스펙터 (zIndex: 20) */}
+      <Inspector
+        isOpen={isRightPanelOpen}
+        setIsOpen={setIsRightPanelOpen}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
+        onLoadPreset={handleLoadPreset}
+      />
+
+      {/* 5. 하단 줌 배율 제어바 (zIndex: 30) */}
+      <div className="border-moss-100 absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-4 rounded-2xl border bg-white/90 p-2.5 text-xs shadow-xl backdrop-blur">
+        <span className="font-semibold text-gray-400">
+          <i className="fa-solid fa-arrows-up-down-left-right mr-1"></i> 화면
+          이동 도구 지원
+        </span>
+        <div className="bg-moss-50/50 border-moss-100/40 flex items-center gap-1 rounded-xl border p-0.5">
           <button
-            onClick={undoShapes}
-            disabled={!canUndo}
-            className="rounded p-2 hover:bg-gray-200 disabled:opacity-50">
-            Undo
+            onClick={() => setZoomLevel(prev => Math.max(25, prev - 25))}
+            className="hover:bg-moss-100 flex h-5 w-5 items-center justify-center rounded-lg text-gray-600 transition-colors">
+            <i className="fa-solid fa-magnifying-glass-minus text-[10px]"></i>
           </button>
+          <span className="w-12 text-center font-bold text-gray-600">
+            {zoomLevel}%
+          </span>
           <button
-            onClick={redoShapes}
-            disabled={!canRedo}
-            className="rounded p-2 hover:bg-gray-200 disabled:opacity-50">
-            Redo
+            onClick={() => setZoomLevel(prev => Math.min(400, prev + 25))}
+            className="hover:bg-moss-100 flex h-5 w-5 items-center justify-center rounded-lg text-gray-600 transition-colors">
+            <i className="fa-solid fa-magnifying-glass-plus text-[10px]"></i>
           </button>
-          <button className="rounded p-2 hover:bg-gray-200">Grid: ON</button>
+          <div className="bg-moss-200 mx-0.5 h-3 w-[1px]" />
           <button
-            onClick={exportToPdf}
-            className="rounded bg-blue-500 p-2 text-white">
-            PDF 다운로드
+            onClick={() => setZoomLevel(100)}
+            className="hover:bg-moss-100 flex h-5 items-center justify-center rounded-lg px-1.5 text-[9px] font-bold text-gray-500">
+            100%
           </button>
         </div>
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Toolbar */}
-        <aside className="flex w-16 flex-col items-center space-y-4 border-r bg-white p-2">
-          <button
-            className="rounded p-2 hover:bg-gray-200"
-            onClick={addRectangle}>
-            Rect
-          </button>
-          <button
-            className="rounded p-2 hover:bg-gray-200"
-            onClick={addCircle}>
-            Circle
-          </button>
-          <button className="rounded p-2 hover:bg-gray-200">Text</button>
-          <button className="rounded p-2 hover:bg-gray-200">Image</button>
-        </aside>
-
-        {/* Main Canvas Area */}
-        <main className="flex flex-1 items-center justify-center bg-gray-200">
-          <svg
-            ref={svgRef}
-            width={800}
-            height={600}
-            className="bg-white shadow-lg"
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onClick={handleCanvasClick}
-            tabIndex={0}>
-            {shapes.map(shape => {
-              if (shape.type === 'rect') {
-                return (
-                  <rect
-                    key={shape.id}
-                    x={shape.x}
-                    y={shape.y}
-                    width={shape.width}
-                    height={shape.height}
-                    fill={shape.fill}
-                    onMouseDown={e => handleMouseDown(e, shape.id)}
-                    cursor="move"
-                    stroke={selectedShapeId === shape.id ? 'blue' : 'none'}
-                    strokeWidth={2}
-                  />
-                )
-              }
-              if (shape.type === 'circle') {
-                return (
-                  <circle
-                    key={shape.id}
-                    cx={shape.cx}
-                    cy={shape.cy}
-                    r={shape.r}
-                    fill={shape.fill}
-                    onMouseDown={e => handleMouseDown(e, shape.id)}
-                    cursor="move"
-                    stroke={selectedShapeId === shape.id ? 'blue' : 'none'}
-                    strokeWidth={2}
-                  />
-                )
-              }
-              return null
-            })}
-          </svg>
-        </main>
-
-        {/* Right Sidebar */}
-        <aside className="w-64 border-l bg-white p-4">
-          <h3 className="mb-4 text-lg font-semibold">속성</h3>
-          {selectedShape && (
-            <div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  색상
-                </label>
-                <div className="mt-1 flex items-center space-x-2">
-                  <input
-                    type="color"
-                    value={selectedShape.fill}
-                    onChange={e =>
-                      updateShapeProperty(
-                        selectedShape.id,
-                        'fill',
-                        e.target.value
-                      )
-                    }
-                    className="h-8 w-8"
-                  />
-                  <span>{selectedShape.fill}</span>
-                </div>
-              </div>
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700">
-                  위치
-                </label>
-                {selectedShape.type === 'rect' && (
-                  <div className="mt-1 grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs">X</label>
-                      <input
-                        type="number"
-                        value={Math.round(selectedShape.x)}
-                        onChange={e =>
-                          updateShapeProperty(
-                            selectedShape.id,
-                            'x',
-                            parseInt(e.target.value, 10)
-                          )
-                        }
-                        className="w-full rounded border p-1"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs">Y</label>
-                      <input
-                        type="number"
-                        value={Math.round(selectedShape.y)}
-                        onChange={e =>
-                          updateShapeProperty(
-                            selectedShape.id,
-                            'y',
-                            parseInt(e.target.value, 10)
-                          )
-                        }
-                        className="w-full rounded border p-1"
-                      />
-                    </div>
-                  </div>
-                )}
-                {selectedShape.type === 'circle' && (
-                  <div className="mt-1 grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs">CX</label>
-                      <input
-                        type="number"
-                        value={Math.round(selectedShape.cx)}
-                        onChange={e =>
-                          updateShapeProperty(
-                            selectedShape.id,
-                            'cx',
-                            parseInt(e.target.value, 10)
-                          )
-                        }
-                        className="w-full rounded border p-1"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs">CY</label>
-                      <input
-                        type="number"
-                        value={Math.round(selectedShape.cy)}
-                        onChange={e =>
-                          updateShapeProperty(
-                            selectedShape.id,
-                            'cy',
-                            parseInt(e.target.value, 10)
-                          )
-                        }
-                        className="w-full rounded border p-1"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs">R</label>
-                      <input
-                        type="number"
-                        value={Math.round(selectedShape.r)}
-                        onChange={e =>
-                          updateShapeProperty(
-                            selectedShape.id,
-                            'r',
-                            parseInt(e.target.value, 10)
-                          )
-                        }
-                        className="w-full rounded border p-1"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="mt-4">
-                <button
-                  onClick={() => deleteShape(selectedShape.id)}
-                  className="w-full rounded bg-red-500 p-2 text-white">
-                  Delete
-                </button>
-              </div>
-            </div>
-          )}
-        </aside>
       </div>
     </div>
   )
 }
 
-export default EditorPage
+const PRESETS = {
+  heart: [
+    18, 19, 21, 22, 25, 26, 27, 28, 29, 30, 33, 34, 35, 36, 37, 38, 41, 42, 43,
+    44, 45, 46, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 62, 63, 64, 65, 66,
+    67, 68, 69, 70, 71, 72, 73, 74, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87,
+    88, 89, 90, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106,
+    110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 127, 128, 129,
+    130, 131, 132, 133, 134, 135, 136, 144, 145, 146, 147, 148, 149, 150, 151,
+    161, 162, 163, 164, 165, 166, 178, 179, 180, 181, 195, 196
+  ],
+  clover: [
+    38, 39, 41, 42, 53, 54, 55, 56, 57, 58, 68, 69, 70, 71, 72, 73, 74, 75, 82,
+    83, 84, 85, 86, 87, 88, 89, 90, 91, 99, 100, 101, 102, 103, 104, 105, 106,
+    107, 108, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 131, 132, 133,
+    134, 135, 136, 137, 138, 149, 150, 151, 152, 153, 154, 167, 168, 182, 183,
+    198
+  ]
+}

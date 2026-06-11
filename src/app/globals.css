@@ -1,26 +1,76 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@theme {
+  /* Version 2: Fair Isle Moss Green Core 테마 변수 매핑 */
+  --color-midnight: #3a332d;
+  --color-terracotta: #c65a43;
+  --color-terracotta-50: #fbf5f4;
+  --color-terracotta-100: #f6e7e4;
+  --color-terracotta-600: #ad4933;
+  --color-moss-50: #f0e9df;
+  --color-moss-100: #eadfc9;
+  --color-moss-200: #b0cfd1;
+  --color-moss-300: #a7b5bb;
+  --color-moss-400: #5d6e4c;
+  --color-moss-500: #465538;
+  --color-moss-600: #323d29;
+  --color-moss-700: #1c3236;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), var(--font-noto-sans-kr), sans-serif;
+  background-color: var(--color-moss-50);
+  color: var(--color-midnight);
+}
+
+/* Transparency Chessboard Helper */
+.transparency-bg {
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(45deg, #f7f3eb 25%, transparent 25%),
+    linear-gradient(-45deg, #f7f3eb 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #f7f3eb 75%),
+    linear-gradient(-45deg, transparent 75%, #f7f3eb 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0px;
+}
+
+/* Knitted Texture Backplate */
+.canvas-knit-texture {
+  background-color: var(--color-moss-100);
+  background-image:
+    radial-gradient(var(--color-midnight) 1px, transparent 0px),
+    radial-gradient(var(--color-terracotta) 1px, transparent 0px);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    8px 8px;
+  opacity: 0.15;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Balanced Fair Isle knitted stripes pattern decoration */
+.knit-stripe {
+  background: repeating-linear-gradient(
+    90deg,
+    #3a332d,
+    #3a332d 16px,
+    #eadfc9 16px,
+    #eadfc9 24px,
+    #5d6e4c 24px,
+    #5d6e4c 44px,
+    #eadfc9 44px,
+    #eadfc9 48px,
+    #c65a43 48px,
+    #c65a43 52px,
+    #eadfc9 52px,
+    #eadfc9 60px
+  );
 }
